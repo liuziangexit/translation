@@ -6,23 +6,19 @@
 
 If you use source control, you’re on your way towards understanding memory ordering, an important consideration when writing lock-free code in C, C++ and other languages.
 
-如果你用过版本控制工具(如Git,SVN), 那就可以很容易地理解内存排序(memory ordering), 在C、C++、Java等语言中编写 **无锁**(lock-free)代码时，指令乱序问题是需要特别注意的地方。
+如果你用过版本控制工具(如Git,SVN), 那就可以很容易地理解指令乱序(memory ordering), 在C、C++、Java等语言中编写 **无锁**(lock-free)代码时，指令乱序问题是需要特别注意的地方。
 
 
 In my last post, I wrote about memory ordering at compile time, which forms one half of the memory ordering puzzle. This post is about the other half: memory ordering at runtime, on the processor itself. Like compiler reordering, processor reordering is invisible to a single-threaded program. It only becomes apparent when lock-free techniques are used – that is, when shared memory is manipulated without any mutual exclusion between threads. However, unlike compiler reordering, the effects of processor reordering are only visible in multicore and multiprocessor systems.
 
 
-在前面的博文中, 介绍了[编译期内存排序](http://preshing.com/20120625/memory-ordering-at-compile-time), 这是内存排序中比较困难的一部分。
-本文则是剩下的部分: 处理器内部运行时的内存排序。 和编译期重排序(compiler reordering)一样, 处理器重排序(processor reordering)在单线程应用中是不会发生的。
-只在使用[无锁技术(lock-free techniques)](http://preshing.com/20120612/an-introduction-to-lock-free-programming) 时才会出现，也就是多个线程之间读写共享内存(shared memory,如堆内存)，却没有使用互斥锁(mutual exclusion)的情况下才会发生。
-与编译器重排序的不同点在于, 处理器重排序[只在多核心/多处理器的系统中才会发生](http://preshing.com/20120515/memory-reordering-caught-in-the-act)。
+在前面的博文中, 介绍了[编译期指令乱序](http://preshing.com/20120625/memory-ordering-at-compile-time), 这只是指令乱序问题的一半。
+本文则关于另一半: 处理器在运行时进行的指令乱序。和编译器重排序(compiler reordering)一样, 处理器重排序(processor reordering)在单线程程序中是无法被观测到的。只在使用[无锁技术(lock-free techniques)](http://preshing.com/20120612/an-introduction-to-lock-free-programming) ，也就是多个线程没有使用互斥锁而读写共享内存(shared memory，如堆内存)时才会被观测到。它与编译器重排序的不同点在于，处理器重排序[只能在多核心/多处理器的系统中才能被观测到](http://preshing.com/20120515/memory-reordering-caught-in-the-act)。
 
 
 You can enforce correct memory ordering on the processor by issuing any instruction which acts as a memory barrier. In some ways, this is the only technique you need to know, because when you use such instructions, compiler ordering is taken care of automatically. Examples of instructions which act as memory barriers include (but are not limited to) the following:
 
-我们可以插入一些充当 **内存屏障**(memory barrier)的指令, 强制CPU按预定的指令顺序执行。
-简单点的话, 我们只需要了解这一种技术就够了, 因为使用这类指令时, 编译器重排序也会自动进行特殊处理。
-一部分可以充当内存屏障的指令包括:
+你可以使用一些**内存屏障**(memory barrier)指令，来强制CPU按正确的顺序来执行指令。简单地说，你只需要了解这一种技术就够了（而不用去了解乱序），因为使用这类指令时，编译器重排序自动就会被规制了。内存屏障指令的例子有:
 
 
 - Certain inline assembly directives in GCC, such as the PowerPC-specific asm volatile("lwsync" ::: "memory")
@@ -32,23 +28,21 @@ You can enforce correct memory ordering on the processor by issuing any instruct
 
 <br/>
 
-- GCC内置的某些汇编指令, 如PowerPC专用的 `asm volatile("lwsync" ::: "memory")`
-- Win32所有的 [Interlocked操作](http://msdn.microsoft.com/en-us/library/windows/desktop/ms684122.aspx), 但Xbox 360除外.
+- GCC中的某些汇编指令，如PowerPC专用的 `asm volatile("lwsync" ::: "memory")`
+- Win32所有的 [Interlocked操作](http://msdn.microsoft.com/en-us/library/windows/desktop/ms684122.aspx)，但面向Xbox 360的程序除外。
 - C++11的一些[原子操作(atomic types)](http://en.cppreference.com/w/cpp/atomic/atomic), 如 `load(std::memory_order_acquire)``
-- POSIX系统中的互斥锁(mutexes), 例如 [`pthread_mutex_lock`](http://linux.die.net/man/3/pthread_mutex_lock)
+- POSIX规范中的互斥锁(mutexes)，例如 [`pthread_mutex_lock`](http://linux.die.net/man/3/pthread_mutex_lock)
 
 
 Just as there are many instructions which act as memory barriers, there are many different types of memory barriers to know about. Indeed, not all of the above instructions produce the same kind of memory barrier – leading to another possible area of confusion when writing lock-free code. In an attempt to clear things up to some extent, I’d like to offer an analogy which I’ve found helpful in understanding the vast majority (but not all) of possible memory barrier types.
 
-既然有很多可作为内存屏障的指令, 也就存在多种不同类型的内存屏障。
-事实上,前面提到的这些指令并不是同一种类型的内存屏障, 在编写无锁代码时可能会存在一些困扰。
-为了更清楚地说明, 我会做一些类比, 应该能帮助您理解大部分的内存屏障类型。
+不仅有很多不同的内存屏障指令，还有很多不同类型的内存屏障。事实上，前面提到的这些指令并不产生同一种类型的内存屏障，这是一个容易令人困惑的方面。为了更清楚地说明，我有一个简单的比喻可以帮你理解大部分的内存屏障类型。
 
 
 
 To begin with, consider the architecture of a typical multicore system. Here’s a device with two cores, each having 32 KiB of private L1 data cache. There’s 1 MiB of L2 cache shared between both cores, and 512 MiB of main memory.
 
-首先, 考虑典型的多核心CPU系统平台。 假设CPU有两个核心, 每个core有`32 KB`的私有L1 data cache. 以及`1 MB`的共享L2 cache, 物理内存为`512 MB`。
+首先, 想象一个典型的双核CPU，每个核心有32 KiB的独占L1 data cache，它们共享一个1 MiB的L2 cache, 以及512 MiB的主存。
 
 
 ![](01_cpu-diagram.png)
@@ -58,7 +52,7 @@ To begin with, consider the architecture of a typical multicore system. Here’s
 
 A multicore system is a bit like a group of programmers collaborating on a project using a bizarre kind of source control strategy. For example, the above dual-core system corresponds to a scenario with just two programmers. Let’s name them Larry and Sergey.
 
-多核心CPU的系统平台, 类似于多个程序员通过版本工具的协作来开发项目。 例如, 双核系统对应于两个程序员的场景。 假设他们的名字是Larry(Larry)和谢尔盖(Sergey)。
+多核心CPU类似于一群程序员通过一个奇怪的版本工具来协作开发项目。例如，之前提到的双核CPU就像是两个程序员。假设他们的名字是拉里(Larry)和谢尔盖(Sergey)。
 
 > 这哥俩是Google的创始人
 
@@ -67,32 +61,28 @@ A multicore system is a bit like a group of programmers collaborating on a proje
 
 On the right, we have a shared, central repository – this represents a combination of main memory and the shared L2 cache. Larry has a complete working copy of the repository on his local machine, and so does Sergey – these (effectively) represent the L1 caches attached to each CPU core. There’s also a scratch area on each machine, to privately keep track of registers and/or local variables. Our two programmers sit there, feverishly editing their working copy and scratch area, all while making decisions about what to do next based on the data they see – much like a thread of execution running on that core.
 
-有一个共享的代码服务器, 就类似系统中的内存+L2缓存。 Larry的PC上有这个仓库的完整副本, 谢尔盖的PC也一样, 类似于每个CPU内核的L1缓存。
-每个程序员的PC上都有草稿区域(scratch area), 就类似于内核私有的寄存器(register) 和 局部变量(local variables).  
-然后两个程序员坐在那里, 疯狂地加班写BUG, 也就是编辑PC上的工作副本和草稿区域, 至于下一步要做什么则完全取决于他们看到的信息 —— 他们就像是在CPU核心上执行的线程。
+在右边有一个共享的仓库, 这相当于CPU的内存+L2缓存。拉里和谢尔盖的电脑上都有这个仓库的完整拷贝，这拷贝相当于每个CPU内核的独占L1缓存。每个人的电脑上也都有一些私有的草稿区域(scratch area)，代表核心独占的寄存器(register) 和 局部变量(local variables)。两个程序员坐在那里, 疯狂地加班写BUG，也就是编辑电脑上的工作副本和草稿区域，至于下一步要做什么则完全取决于他们看到的信息 —— 他们就像是在CPU核心上执行的线程。
 
 
 Which brings us to the source control strategy. In this analogy, the source control strategy is very strange indeed. As Larry and Sergey modify their working copies of the repository, their modifications are constantly leaking in the background, to and from the central repository, at totally random times. Once Larry edits the file X, his change will leak to the central repository, but there’s no guarantee about when it will happen. It might happen immediately, or it might happen much, much later. He might go on to edit other files, say Y and Z, and those modifications might leak into the respository before X gets leaked. In this manner, stores are effectively reordered on their way to the repository.
 
 
-看看代码版本控制策略。 在这个类比中, 代码版本控制策略非常奇怪。
-Larry和谢尔盖修改各自的工作副本, 他们在后台不断地修改BUG, 随时可能和中央仓库同步。 只要Larry编辑X文件, 他的修改就会写入将到中央仓库, 但是不能保证什么时候会同步, 可能会立即推送, 也可能稍后再推送。 还可能去编辑其他文件, 比如Y和Z, 而且这些修改还可能在X同步之前写入到中央仓库中。 通过这种方式, 有效地重排了将各个文件保存到仓库的顺序。
+这就是我的比喻。确实，在我的比喻里版本控制策略非常奇怪。Larry和谢尔盖修改各自的工作副本，他们的改动总是不断地被同步到中央仓库去。只要Larry编辑X文件，他的修改就会写入到中央仓库，但是同步的时机完全是随机的，可能会立即同步, 也可能过了好久才同步。他还可能去编辑其他文件，比如Y和Z，而且这些修改还可能在写入X之前就被写入到中央仓库中。这就是说，对仓库的写操作的顺序是被打乱的。
 
 
 Similarly, on Sergey’s machine, there’s no guarantee about the timing or the order in which those changes leak back from the repository into his working copy. In this manner, loads are effectively reordered on their way out of the repository.
 
-同样, 谢尔盖的机器, 也就不能保证从中央仓库同步文件到本地副本的顺序。 以这种方式, 从仓库load代码的顺序被打乱了。
+类似的情况发生在在谢尔盖的电脑上，他从中央仓库读取文件到本地的顺序和时机也是不确定的。这就是说，对仓库的读操作的顺序也是被打乱的。
 
 
 Now, if each programmer works on completely separate parts of the repository, neither programmer will be aware of these background leaks going on, or even of the other programmer’s existence. That would be analogous to running two independent, single-threaded processes. In this case, the cardinal rule of memory ordering is upheld.
 
-现在, 如果每个程序员操作的文件和别人完全不同, 则他们都不会意识到底层会有这些问题, 甚至意识不到其他程序员的存在.
-就类似于两个独立的单线程的进程。这种情况, 符合[内存排序的基本规则](http://preshing.com/20120625/memory-ordering-at-compile-time)。
+现在，如果两个程序员操作的是储存库里不同的部分，则他们都不会观察到这些同步，甚至不会观察到对方的存在。这就类似于两个独立的单线程进程。这种情况下，[指令排序的基本规则](http://preshing.com/20120625/memory-ordering-at-compile-time)不会被破坏。即他们/它们不会发现到读和写的顺序被打乱了。
 
 
 The analogy becomes more useful once our programmers start working on the same parts of the repository. Let’s revisit the example I gave in an earlier post. X and Y are global variables, both initially 0:
 
-一旦多个程序员开始处理相同的文件，这种类比就会变得更加明显。让我们回顾[前一篇文章中的例子](http://preshing.com/20120515/memory-reordering-caught-in-the-act)。X和Y是全局变量，初始值都为0:
+一旦这对程序员开始处理储存库的统一部分，这个比喻就会变得有用。让我们回顾[前一篇文章中的例子](http://preshing.com/20120515/memory-reordering-caught-in-the-act)。X和Y是全局变量，初始值都为0:
 
 
 ![](03_marked-example2-2.png)
@@ -102,9 +92,7 @@ The analogy becomes more useful once our programmers start working on the same p
 
 Think of X and Y as files which exist on Larry’s working copy of the repository, Sergey’s working copy, and the central repository itself. Larry writes 1 to his working copy of X and Sergey writes 1 to his working copy of Y at roughly the same time. If neither modification has time to leak to the repository and back before each programmer looks up his working copy of the other file, they’ll end up with both r1 = 0 and r2 = 0. This result, which may have seemed counterintuitive at first, actually becomes pretty obvious in the source control analogy.
 
-可以将X和Y看作文件， 存在于Larry的工作副本、Sergey的工作副本，以及中央仓库中。 Larry将工作副本中X文件的内容设置为1, 谢尔盖大约在同一时间将工作副本中Y文件的内容设置为1。
-如果在每个程序员查找另一个文件之前，这两次修改都没有保存到中央仓库并返回， 那么代码最终得到的结果将会是 r1=0和r2=0.
-乍一看这个结果似乎违反直觉，但实际上在代码控制的类比中变得非常明显。
+把X和Y当作Larry和谢尔盖正在同时访问的文件，这些文件有几个拷贝，分别是Larry的工作副本、Sergey的工作副本，以及中央仓库中的原本。Larry将他的工作副本中X文件的内容设置为1，谢尔盖差不多同时也将他的工作副本中Y文件的内容设置为1。如果在每个程序员另一个文件之前，这两次修改都没有保存到中央仓库并返回， 那么代码最终得到的结果将会是 r1=0和r2=0.
 
 
 ![](04_iriw-state.png)
@@ -298,7 +286,7 @@ If we throw a #LoadStore barrier into that operation, which shouldn’t be a big
 
 As I’ve mentioned previously, every processor has different habits when it comes to memory ordering. The x86/64 family, in particular, has a strong memory model; it’s known to keep memory reordering to a minimum. PowerPC and ARM have weaker memory models, and the Alpha is famous for being in a league of its own. Fortunately, the analogy presented in this post corresponds to a weak memory model. If you can wrap your head around it, and enforce correct memory ordering using the fence instructions given here, you should be able to handle most CPUs.
 
-正如我前面所提到的, 各种处理器的内存排序行为都是不同的。尤其是 x86/64 家族,拥有强内存模型(strong memory model), 很少有内存重排序。而PowerPC和ARM 的是弱内存模型(weaker memory models),和 Alpha 而闻名的联盟。幸运的是, 这篇文章中给出的类比对应于一个弱内存模型(weak memory model)。如果你在大脑中记住, 并使用栅栏指令执行正确的内存排序, 你应该能应付大部分的 cpu。
+正如我前面所提到的, 各种处理器的指令乱序行为都是不同的。尤其是 x86/64 家族,拥有强内存模型(strong memory model), 很少有内存重排序。而PowerPC和ARM 的是弱内存模型(weaker memory models),和 Alpha 而闻名的联盟。幸运的是, 这篇文章中给出的类比对应于一个弱内存模型(weak memory model)。如果你在大脑中记住, 并使用栅栏指令执行正确的指令乱序, 你应该能应付大部分的 cpu。
 
 
 The analogy also corresponds pretty well to the abstract machine targeted by both C++11 (formerly known as C++0x) and C11. Therefore, if you write lock-free code using the standard library of those languages while keeping the above analogy in mind, it’s more likely to function correctly on any platform.
